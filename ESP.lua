@@ -85,7 +85,9 @@ local Camera = workspace.CurrentCamera
 -- ─── VARIABLES ───────────────────────────────────────────────────────────
 
 local ESPEnabled = false
-local HighlightObjects = {}
+local ESPObjects = {}
+local ESPColor = Color3.fromRGB(255, 0, 0)
+local ESPSize = 5
 local SelectedPlayerName = nil
 local SetPosition = nil
 local TeleportTargetName = nil
@@ -113,39 +115,98 @@ end
 
 -- ─── ESP SYSTEM ──────────────────────────────────────────────────────────
 
-local function CreateHighlight(player)
-    if HighlightObjects[player] then return end
+local function CreateESP(player)
+    if ESPObjects[player] then return end
     if player == LP then return end
     
     local char = GetCharacter(player)
     if not char then return end
     
+    local root = GetRootPart(char)
+    if not root then return end
+    
+    -- Highlight
     local highlight = Instance.new("Highlight")
-    highlight.FillColor = Color3.fromRGB(255, 0, 0)
+    highlight.FillColor = ESPColor
     highlight.FillTransparency = 0.7
-    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    highlight.OutlineColor = ESPColor
     highlight.OutlineTransparency = 0.2
     highlight.Adornee = char
     highlight.Parent = char
     highlight.Enabled = ESPEnabled
     
-    HighlightObjects[player] = highlight
+    -- ESP Sphere (scalable)
+    local sphere = Instance.new("Part")
+    sphere.Name = "ESP_Sphere"
+    sphere.Size = Vector3.new(ESPSize, ESPSize, ESPSize)
+    sphere.Shape = Enum.PartType.Ball
+    sphere.Material = Enum.Material.Neon
+    sphere.Color = ESPColor
+    sphere.Transparency = 0.5
+    sphere.CanCollide = false
+    sphere.Anchored = false
+    sphere.Parent = root
+    sphere.CFrame = root.CFrame
+    
+    -- Weld sphere to root
+    local weld = Instance.new("Weld")
+    weld.Part0 = root
+    weld.Part1 = sphere
+    weld.C0 = CFrame.new(0, 0, 0)
+    weld.Parent = sphere
+    
+    ESPObjects[player] = {
+        Highlight = highlight,
+        Sphere = sphere,
+        Weld = weld,
+        Player = player
+    }
 end
 
-local function RemoveHighlight(player)
-    if HighlightObjects[player] then
-        HighlightObjects[player]:Destroy()
-        HighlightObjects[player] = nil
+local function RemoveESP(player)
+    if ESPObjects[player] then
+        if ESPObjects[player].Highlight then
+            ESPObjects[player].Highlight:Destroy()
+        end
+        if ESPObjects[player].Sphere then
+            ESPObjects[player].Sphere:Destroy()
+        end
+        if ESPObjects[player].Weld then
+            ESPObjects[player].Weld:Destroy()
+        end
+        ESPObjects[player] = nil
     end
 end
 
-local function UpdateHighlights()
-    for player, highlight in pairs(HighlightObjects) do
+local function UpdateESPVisuals()
+    for player, data in pairs(ESPObjects) do
+        if data.Highlight then
+            data.Highlight.FillColor = ESPColor
+            data.Highlight.OutlineColor = ESPColor
+            data.Highlight.Enabled = ESPEnabled
+        end
+        if data.Sphere then
+            data.Sphere.Color = ESPColor
+            data.Sphere.Size = Vector3.new(ESPSize, ESPSize, ESPSize)
+            data.Sphere.Transparency = 0.5
+            data.Sphere.Visible = ESPEnabled
+        end
+    end
+end
+
+local function UpdateESP()
+    for player, data in pairs(ESPObjects) do
         if player and player.Character then
-            highlight.Adornee = player.Character
-            highlight.Enabled = ESPEnabled
+            local root = GetRootPart(player.Character)
+            if root and data.Sphere then
+                data.Sphere.CFrame = root.CFrame
+            end
+            if data.Highlight then
+                data.Highlight.Adornee = player.Character
+            end
         else
-            highlight.Enabled = false
+            data.Highlight.Enabled = false
+            data.Sphere.Visible = false
         end
     end
 end
@@ -158,10 +219,8 @@ local function TeleportToPosition(position)
     local root = GetRootPart(char)
     if not root then return false end
     
-    -- Direct teleport (instant)
     root.CFrame = CFrame.new(position)
     
-    -- Also try tween for smoothness
     pcall(function()
         local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
         local tween = TweenService:Create(root, tweenInfo, {CFrame = CFrame.new(position)})
@@ -212,11 +271,9 @@ local function BringPlayer(playerName)
     local myRoot = GetRootPart(myChar)
     if not myRoot then return false, "Your root part not found" end
     
-    -- Teleport target to my position
     local myPos = myRoot.Position
     targetRoot.CFrame = CFrame.new(myPos + Vector3.new(0, 3, 0))
     
-    -- Also try tween
     pcall(function()
         local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
         local tween = TweenService:Create(targetRoot, tweenInfo, {CFrame = CFrame.new(myPos + Vector3.new(0, 3, 0))})
@@ -293,7 +350,7 @@ local ESPToggle = ESPTab:CreateToggle({
         if Value then
             for _, player in ipairs(Players:GetPlayers()) do
                 if player ~= LP then
-                    CreateHighlight(player)
+                    CreateESP(player)
                 end
             end
             Rayfield:Notify({
@@ -302,8 +359,8 @@ local ESPToggle = ESPTab:CreateToggle({
                 Duration = 2
             })
         else
-            for player, _ in pairs(HighlightObjects) do
-                RemoveHighlight(player)
+            for player, _ in pairs(ESPObjects) do
+                RemoveESP(player)
             end
             Rayfield:Notify({
                 Title = "ESP",
@@ -315,13 +372,25 @@ local ESPToggle = ESPTab:CreateToggle({
 })
 
 local ColorPicker = ESPTab:CreateColorPicker({
-    Name = "Highlight Color",
+    Name = "ESP Color",
     Color = Color3.fromRGB(255, 0, 0),
     Flag = "ESPColor",
     Callback = function(Color)
-        for player, highlight in pairs(HighlightObjects) do
-            highlight.FillColor = Color
-        end
+        ESPColor = Color
+        UpdateESPVisuals()
+    end
+})
+
+local ESPSizeSlider = ESPTab:CreateSlider({
+    Name = "ESP Size",
+    Range = {2, 30},
+    Increment = 0.5,
+    Suffix = " studs",
+    CurrentValue = 5,
+    Flag = "ESPSize",
+    Callback = function(Value)
+        ESPSize = Value
+        UpdateESPVisuals()
     end
 })
 
@@ -329,12 +398,12 @@ local RefreshESP = ESPTab:CreateButton({
     Name = "Refresh ESP",
     Callback = function()
         if ESPEnabled then
-            for player, _ in pairs(HighlightObjects) do
-                RemoveHighlight(player)
+            for player, _ in pairs(ESPObjects) do
+                RemoveESP(player)
             end
             for _, player in ipairs(Players:GetPlayers()) do
                 if player ~= LP then
-                    CreateHighlight(player)
+                    CreateESP(player)
                 end
             end
             Rayfield:Notify({
@@ -546,7 +615,7 @@ local RefreshBring = BringTab:CreateButton({
 
 local CreditsLabel = SettingsTab:CreateParagraph({
     Title = "ESP + Teleport + Bring Hub",
-    Content = "by The Invisible Man\nKey: Zkiller\nESP highlights players\nTeleport to players or positions\nBring players to you"
+    Content = "by The Invisible Man\nKey: Zkiller\nESP highlights players with scalable glow sphere\nTeleport to players or positions\nBring players to you"
 })
 
 -- ─── AUTO REFRESH ──────────────────────────────────────────────────────
@@ -555,7 +624,7 @@ spawn(function()
     while true do
         wait(5)
         if ESPEnabled then
-            UpdateHighlights()
+            UpdateESP()
         end
         local players = GetPlayerList()
         pcall(function()
@@ -571,13 +640,13 @@ Players.PlayerAdded:Connect(function(player)
     player.CharacterAdded:Connect(function(char)
         task.wait(0.5)
         if ESPEnabled then
-            CreateHighlight(player)
+            CreateESP(player)
         end
     end)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
-    RemoveHighlight(player)
+    RemoveESP(player)
 end)
 
 -- ─── NOTIFY ON LOAD ──────────────────────────────────────────────────

@@ -1,4 +1,4 @@
--- ESP + Teleport | The Invisible Man
+-- ESP + Teleport + Bring | The Invisible Man
 -- Key: Zkiller
 
 -- ─── ANTI-CHEAT BYPASS ──────────────────────────────────────────────────
@@ -89,6 +89,7 @@ local HighlightObjects = {}
 local SelectedPlayerName = nil
 local SetPosition = nil
 local TeleportTargetName = nil
+local BringTargetName = nil
 
 -- ─── FUNCTIONS ───────────────────────────────────────────────────────────
 
@@ -98,6 +99,10 @@ end
 
 local function GetHumanoid(character)
     return character and character:FindFirstChildOfClass("Humanoid")
+end
+
+local function GetRootPart(character)
+    return character and (character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Torso"))
 end
 
 local function IsAlive(player)
@@ -150,13 +155,20 @@ end
 local function TeleportToPosition(position)
     local char = LP.Character
     if not char then return false end
-    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+    local root = GetRootPart(char)
     if not root then return false end
     
-    local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-    local tween = TweenService:Create(root, tweenInfo, {CFrame = CFrame.new(position)})
-    tween:Play()
-    tween.Completed:Wait()
+    -- Direct teleport (instant)
+    root.CFrame = CFrame.new(position)
+    
+    -- Also try tween for smoothness
+    pcall(function()
+        local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        local tween = TweenService:Create(root, tweenInfo, {CFrame = CFrame.new(position)})
+        tween:Play()
+        tween.Completed:Wait()
+    end)
+    
     return true
 end
 
@@ -168,13 +180,51 @@ local function TeleportToPlayer(playerName)
             break
         end
     end
-    if not target then return false end
-    local char = GetCharacter(target)
-    if not char then return false end
-    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-    if not root then return false end
+    if not target then return false, "Player not found" end
+    if not IsAlive(target) then return false, "Player is dead" end
     
-    return TeleportToPosition(root.Position)
+    local char = GetCharacter(target)
+    if not char then return false, "Character not found" end
+    local root = GetRootPart(char)
+    if not root then return false, "Root part not found" end
+    
+    return TeleportToPosition(root.Position), nil
+end
+
+local function BringPlayer(playerName)
+    local target = nil
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Name == playerName then
+            target = p
+            break
+        end
+    end
+    if not target then return false, "Player not found" end
+    if not IsAlive(target) then return false, "Player is dead" end
+    
+    local targetChar = GetCharacter(target)
+    if not targetChar then return false, "Character not found" end
+    local targetRoot = GetRootPart(targetChar)
+    if not targetRoot then return false, "Root part not found" end
+    
+    local myChar = LP.Character
+    if not myChar then return false, "Your character not found" end
+    local myRoot = GetRootPart(myChar)
+    if not myRoot then return false, "Your root part not found" end
+    
+    -- Teleport target to my position
+    local myPos = myRoot.Position
+    targetRoot.CFrame = CFrame.new(myPos + Vector3.new(0, 3, 0))
+    
+    -- Also try tween
+    pcall(function()
+        local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        local tween = TweenService:Create(targetRoot, tweenInfo, {CFrame = CFrame.new(myPos + Vector3.new(0, 3, 0))})
+        tween:Play()
+        tween.Completed:Wait()
+    end)
+    
+    return true, nil
 end
 
 -- ─── SET POSITION VIA MOUSE CLICK ──────────────────────────────────────
@@ -229,6 +279,7 @@ local Window = Rayfield:CreateWindow({
 
 local ESPTab = Window:CreateTab("ESP")
 local TeleportTab = Window:CreateTab("Teleport")
+local BringTab = Window:CreateTab("Bring")
 local SettingsTab = Window:CreateTab("Settings")
 
 -- ─── ESP TAB ────────────────────────────────────────────────────────────
@@ -313,7 +364,7 @@ local TeleportToPlayerButton = TeleportTab:CreateButton({
     Name = "Teleport to Player",
     Callback = function()
         if TeleportTargetName then
-            local success = TeleportToPlayer(TeleportTargetName)
+            local success, err = TeleportToPlayer(TeleportTargetName)
             if success then
                 Rayfield:Notify({
                     Title = "Teleported",
@@ -323,10 +374,16 @@ local TeleportToPlayerButton = TeleportTab:CreateButton({
             else
                 Rayfield:Notify({
                     Title = "Error",
-                    Content = "Could not teleport to player",
+                    Content = err or "Could not teleport",
                     Duration = 2
                 })
             end
+        else
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "Select a player first",
+                Duration = 2
+            })
         end
     end
 })
@@ -335,6 +392,7 @@ local RefreshPlayers = TeleportTab:CreateButton({
     Name = "Refresh Player List",
     Callback = function()
         PlayerDropdown:SetOptions(GetPlayerList())
+        BringDropdown:SetOptions(GetPlayerList())
         Rayfield:Notify({
             Title = "Players",
             Content = "Refreshed",
@@ -430,11 +488,65 @@ local TeleportToSetPos = TeleportTab:CreateButton({
     end
 })
 
+-- ─── BRING TAB ──────────────────────────────────────────────────────────
+
+local BringSection = BringTab:CreateSection("Bring Player to You")
+
+local BringDropdown = BringTab:CreateDropdown({
+    Name = "Select Player to Bring",
+    Options = GetPlayerList(),
+    CurrentOption = "",
+    Flag = "BringDropdown",
+    Callback = function(Option)
+        BringTargetName = Option
+    end
+})
+
+local BringPlayerButton = BringTab:CreateButton({
+    Name = "Bring Player",
+    Callback = function()
+        if BringTargetName then
+            local success, err = BringPlayer(BringTargetName)
+            if success then
+                Rayfield:Notify({
+                    Title = "Brought",
+                    Content = "Brought " .. BringTargetName .. " to you",
+                    Duration = 2
+                })
+            else
+                Rayfield:Notify({
+                    Title = "Error",
+                    Content = err or "Could not bring player",
+                    Duration = 2
+                })
+            end
+        else
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "Select a player first",
+                Duration = 2
+            })
+        end
+    end
+})
+
+local RefreshBring = BringTab:CreateButton({
+    Name = "Refresh Player List",
+    Callback = function()
+        BringDropdown:SetOptions(GetPlayerList())
+        Rayfield:Notify({
+            Title = "Players",
+            Content = "Refreshed",
+            Duration = 2
+        })
+    end
+})
+
 -- ─── SETTINGS TAB ──────────────────────────────────────────────────────
 
 local CreditsLabel = SettingsTab:CreateParagraph({
-    Title = "ESP + Teleport Hub",
-    Content = "by The Invisible Man\nKey: Zkiller\nESP highlights players\nSet position and teleport"
+    Title = "ESP + Teleport + Bring Hub",
+    Content = "by The Invisible Man\nKey: Zkiller\nESP highlights players\nTeleport to players or positions\nBring players to you"
 })
 
 -- ─── AUTO REFRESH ──────────────────────────────────────────────────────
@@ -445,7 +557,11 @@ spawn(function()
         if ESPEnabled then
             UpdateHighlights()
         end
-        PlayerDropdown:SetOptions(GetPlayerList())
+        local players = GetPlayerList()
+        pcall(function()
+            PlayerDropdown:SetOptions(players)
+            BringDropdown:SetOptions(players)
+        end)
     end
 end)
 
@@ -468,7 +584,7 @@ end)
 
 Rayfield:Notify({
     Title = "Loaded",
-    Content = "ESP + Teleport | by The Invisible Man",
+    Content = "ESP + Teleport + Bring | by The Invisible Man",
     Duration = 3
 })
 
